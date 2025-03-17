@@ -1,0 +1,56 @@
+dataset
+env
+learning_curves
+results
+results_fingerprint
+results_resnet_vectors
+results-fold1/
+results-fold2/
+results-fold3/
+results-fold4/
+results-fold5/
+database.pkl
+*.png
+vgg/
+efficientNet/
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# Datasets and models (often large)
+dataset/
+models/
+*.pth
+*.pt
+*.h5
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo

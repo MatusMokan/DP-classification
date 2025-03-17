@@ -1,0 +1,7 @@
+{
+    "models": {
+      "vit": "google/vit-base-patch16-224-in21k",
+      "resnet": "microsoft/resnet-50"
+    },
+    "selected_model": "vit"
+}

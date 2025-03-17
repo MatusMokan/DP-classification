@@ -1,0 +1,2 @@
+# Choose between "svm" and "rf"
+classifier: svm
