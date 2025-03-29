@@ -10,6 +10,8 @@ import pickle
 from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
+from scipy.spatial.distance import cdist
+
 # ---------- Helper Functions ----------
 
 # skript 15 dobrych osob 5 utocnikov
@@ -85,12 +87,97 @@ def build_retina_template(feature_points, k=4):
         template[i, k:] = angle_vals
     return template
 
+def build_retina_template_invariant(feature_points, k=4):
+    """
+    Build a rotation-invariant template as an R x 8 matrix.
+    For each feature point, we compute its k nearest neighbors and store:
+      [d1, d2, d3, d4, (theta1 - base), (theta2 - base), (theta3 - base), (theta4 - base)],
+    where base is a reference angle computed (e.g., as the median) from all neighbor angles.
+    """
+    if len(feature_points) == 0:
+        return np.empty((0, 8), dtype=np.float32)
+    R = len(feature_points)
+    template = np.zeros((R, 8), dtype=np.float32)
+    
+    for i, (cx, cy) in enumerate(feature_points):
+        # Compute all angles from this point to every other point
+        angles = []
+        for j, (nx, ny) in enumerate(feature_points):
+            if i == j:
+                continue
+            angles.append(angle_degrees(cx, cy, nx, ny))
+        # Use median (or mean) as the base reference angle
+        base_angle = np.median(angles)
+        
+        # Now compute distances and relative angles
+        dist_rel_list = []
+        for j, (nx, ny) in enumerate(feature_points):
+            if i == j:
+                continue
+            dist = euclidean_distance(cx, cy, nx, ny)
+            abs_angle = angle_degrees(cx, cy, nx, ny)
+            # Compute relative angle and normalize (e.g., to [0,360))
+            rel_angle = (abs_angle - base_angle) % 360
+            dist_rel_list.append((dist, rel_angle))
+        
+        # Sort by distance and pick the k nearest neighbors
+        dist_rel_list.sort(key=lambda x: x[0])
+        nearest = dist_rel_list[:k]
+        
+        # Unpack distances and angles, and zero-pad if needed
+        dist_vals, angle_vals = zip(*nearest) if nearest else ([], [])
+        dist_vals = list(dist_vals)
+        angle_vals = list(angle_vals)
+        while len(dist_vals) < k:
+            dist_vals.append(0.0)
+            angle_vals.append(0.0)
+            
+        template[i, :k] = dist_vals
+        template[i, k:] = angle_vals
+    return template
+
+def align_feature_points(feature_points):
+    """
+    Align feature points by computing the principal axis (via PCA)
+    and rotating the points so that this axis is horizontal.
+    Returns the aligned feature points and the rotation angle.
+    """
+    pts = np.array(feature_points)
+    if pts.shape[0] == 0:
+        return feature_points, 0
+    mean_pt = np.mean(pts, axis=0)
+    centered = pts - mean_pt
+    # Compute covariance matrix and perform eigen decomposition
+    cov = np.cov(centered, rowvar=False)
+    eig_vals, eig_vecs = np.linalg.eigh(cov)
+    # Principal component (largest eigenvalue)
+    principal_vec = eig_vecs[:, np.argmax(eig_vals)]
+    angle = math.atan2(principal_vec[1], principal_vec[0])
+    # Rotation matrix to rotate by -angle (to align the principal axis horizontally)
+    R = np.array([[math.cos(-angle), -math.sin(-angle)],
+                  [math.sin(-angle),  math.cos(-angle)]])
+    aligned_pts = (centered @ R.T) + mean_pt
+    return aligned_pts.tolist(), angle
+
+# def extract_template(image_path):
+#     """
+#     Load image, binarize with Otsu, skeletonize, extract feature points,
+#     align them to remove rotation variability, and build a retina template.
+#     Returns the template (R x 8 numpy array).
+#     """
+#     vessel_gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+#     if vessel_gray is None:
+#         raise FileNotFoundError(f"Could not load image: {image_path}")
+#     _, vessel_bin = cv2.threshold(vessel_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+#     bin_img = (vessel_bin > 0).astype(np.uint8)
+#     skeleton = skeletonize(bin_img).astype(np.uint8)
+#     feature_points = crossing_number_features(skeleton)
+#     # Align feature points to reduce rotation effects
+#     feature_points_aligned, angle = align_feature_points(feature_points)
+#     template = build_retina_template(feature_points_aligned, k=4)
+#     return 
+
 def extract_template(image_path):
-    """
-    Load image, binarize with Otsu, skeletonize, extract feature points,
-    and build a retina template.
-    Returns the template (R x 8 numpy array).
-    """
     vessel_gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if vessel_gray is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
@@ -98,19 +185,26 @@ def extract_template(image_path):
     bin_img = (vessel_bin > 0).astype(np.uint8)
     skeleton = skeletonize(bin_img).astype(np.uint8)
     feature_points = crossing_number_features(skeleton)
-    template = build_retina_template(feature_points, k=4)
+    # Option 1: Do not perform any global alignment (skip align_feature_points)
+    template = build_retina_template_invariant(feature_points, k=4)
     return template
 
+# def compute_min_distance(template1, template2):
+#     """
+#     Compute the minimum L2 distance between any pair of rows from two templates.
+#     """
+#     if template1.shape[0] == 0 or template2.shape[0] == 0:
+#         return float("inf")
+#     dists = []
+#     for row1 in template1:
+#         for row2 in template2:
+#             dists.append(np.linalg.norm(row1 - row2))
+#     return np.min(dists)
+
 def compute_min_distance(template1, template2):
-    """
-    Compute the minimum L2 distance between any pair of rows from two templates.
-    """
     if template1.shape[0] == 0 or template2.shape[0] == 0:
         return float("inf")
-    dists = []
-    for row1 in template1:
-        for row2 in template2:
-            dists.append(np.linalg.norm(row1 - row2))
+    dists = cdist(template1, template2, metric='euclidean')
     return np.min(dists)
 
 def match_live_template(live_template, database, threshold=5):
@@ -159,6 +253,41 @@ def match_live_template_TSM(live_template, database, distance_threshold=5, vote_
     else:
         return None, votes[best_subject]
 
+from sklearn.neighbors import KDTree
+
+
+def build_kdtrees(database):
+    """Build a KDTree for each subject's stored template vectors."""
+    kdtrees = {}
+    for subject_id, templates in database.items():
+        # Stack all stored vectors for the subject
+        stored_vectors = np.vstack(templates)
+        kdtrees[subject_id] = KDTree(stored_vectors)
+    return kdtrees
+
+def match_live_template_TSM_kdtree(live_template, kdtrees, distance_threshold=5, vote_threshold=15):
+    """
+    Enhanced Matching Strategy (TSM) using KDTree:
+    For each feature vector in the live_template, query each subject's KDTree for the nearest neighbor.
+    """
+    votes = {subject_id: 0 for subject_id in kdtrees.keys()}
+    for live_vec in live_template:
+        best_sub = None
+        best_dist = float("inf")
+        for subject_id, tree in kdtrees.items():
+            # Query the KDTree for the nearest neighbor distance
+            dist, _ = tree.query(live_vec.reshape(1, -1), k=1)
+            if dist[0][0] < best_dist:
+                best_dist = dist[0][0]
+                best_sub = subject_id
+        if best_dist <= distance_threshold and best_sub is not None:
+            votes[best_sub] += 1
+    best_subject = max(votes, key=votes.get)
+    if votes[best_subject] >= vote_threshold:
+        return best_subject, votes[best_subject]
+    else:
+        return None, votes[best_subject]
+    
 def plot_distance_distribution(genuine_dists, imposter_dists):
     """Plot histograms of minimum distances for genuine and imposter matches."""
     plt.figure(figsize=(8, 6))
@@ -274,27 +403,136 @@ def plot_far_frr_vs_threshold_both(mode, test_set, database, thresholds=np.linsp
 
 # ---------- Database Saving/Loading ----------
 
-DATABASE_FILE = "database.pkl"
+# DATABASE_FILE = "database.pkl"
+# TEST_DATABASE_FILE = "test_templates.pkl"
+# TEST_SET_FILE = "test_set.pkl"  
+
+# DATABASE_FILE = "FIRE_s_database.pkl"
+# TEST_DATABASE_FILE = "FIRE_s_est_templates.pkl"
+# TEST_SET_FILE = "FIRE_s_test_set.pkl"  
+
+# DATABASE_FILE = "FIRE_dataset.pkl"
+# TEST_DATABASE_FILE = "FIRE_test_templates.pkl"
+# TEST_SET_FILE = "FIRE_test_set.pkl"  # New file to store test set data
 # DATABASE_FILE = "database4D.pkl"
 
 
+# DATABASE_FILE = "GRATINA_database.pkl"
+# TEST_DATABASE_FILE = "GRATINA_test_templates.pkl"
+# TEST_SET_FILE = "GRATINA_test_set.pkl"  
+
+# DATABASE_FILE = "GRATINA_rot_database.pkl"
+# TEST_DATABASE_FILE = "GRATINA_rot_test_templates.pkl"
+# TEST_SET_FILE = "GRATINA_rot_test_set.pkl"  
+
+# DATABASE_FILE = "mixed_database.pkl"
+# TEST_DATABASE_FILE = "mixed_test_templates.pkl"
+# TEST_SET_FILE = "mixed_test_set.pkl"  
+
+DATABASE_FILE = "GRATINA_rot_all_database.pkl"
+TEST_DATABASE_FILE = "GRATINA_rot_all_test_templates.pkl"
+TEST_SET_FILE = "GRATINA_rot_all_test_set.pkl"  
+import os
+
+# Define database directory
+DATABASE_DIR = "database/pure_gratina"
+BATCH_DIR = "_1"
+
 def save_database(db, filename=DATABASE_FILE):
-    with open(filename, "wb") as f:
-        pickle.dump(db, f)
+    """
+    Save a database object to a pickle file in the database directory.
+    
+    Args:
+        db: The database object to save
+        filename: Name of the file to save to
+    """
+    # Create database directory if it doesn't exist
+    if not os.path.exists(DATABASE_DIR):
+        os.makedirs(DATABASE_DIR)
+        print(f"Created database directory: {DATABASE_DIR}")
+    
+    # Join the directory and filename
+    filepath = os.path.join(DATABASE_DIR, BATCH_DIR, filename)
+    
+    try:
+        with open(filepath, "wb") as f:
+            pickle.dump(db, f)
+        print(f"Database saved to {filepath}")
+    except Exception as e:
+        print(f"Error saving database to {filepath}: {e}")
 
 def load_database(filename=DATABASE_FILE):
-    with open(filename, "rb") as f:
-        return pickle.load(f)
+    """
+    Load a database object from a pickle file in the database directory.
+    
+    Args:
+        filename: Name of the file to load from
+        
+    Returns:
+        The loaded database object
+    
+    Raises:
+        FileNotFoundError: If the file doesn't exist
+    """
+    # Join the directory and filename
+    filepath = os.path.join(DATABASE_DIR, BATCH_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Database file not found: {filepath}")
+    
+    try:
+        with open(filepath, "rb") as f:
+            return pickle.load(f)
+    except Exception as e:
+        print(f"Error loading database from {filepath}: {e}")
+        raise
 
+
+def build_test_database(test_set):
+    """Build a database of test templates to avoid recomputing them"""
+    test_db = {}
+    print("Building test template database...")
+    for subject, img_path, is_genuine in tqdm(test_set, desc="Extracting test templates"):
+        template = extract_template(img_path)
+        test_db[img_path] = template
+    return test_db
 
 # ---------- Main Pipeline ----------
 
 if __name__ == "__main__":
-    base_dir = "dataset/onDrive-divided-cropped"
-    subjects = [d for d in sorted(os.listdir(base_dir)) if os.path.isdir(os.path.join(base_dir, d))]
-    enrolled_subjects = subjects[:15]  # first 15 persons (genuine subjects)
-    attacker_subjects = subjects[15:]   # last 5 persons (attackers)
+    # Original dataset
+    # base_dir = "dataset/onDrive-divided-cropped"
+    base_dir = "dataset/onDrive-divided"
 
+    subjects = [d for d in sorted(os.listdir(base_dir)) if os.path.isdir(os.path.join(base_dir, d))]
+    
+    # FIRE dataset
+    # fire_base_dir = "dataset/FIRE/onDrive-divided-augmented-res"
+    # fire_subjects = [d for d in sorted(os.listdir(fire_base_dir)) if os.path.isdir(os.path.join(fire_base_dir, d))]
+
+    fire_base_dir = "dataset/GRATINA/onDrive-divided-augmented-more"
+    fire_subjects = [d for d in sorted(os.listdir(fire_base_dir)) if os.path.isdir(os.path.join(fire_base_dir, d))]
+    
+    # Option 2: Select 50 subjects from FIRE for enrollment and use the rest as attackers
+    fire_enrolled_percent = 80  # Adjust as needed (percentage of FIRE subjects to enroll)
+    fire_enrolled_count = int(len(fire_subjects) * fire_enrolled_percent / 100)
+    
+    # Combined genuine and attacker subjects
+    # enrolled_subjects = subjects[:15] + fire_subjects[:fire_enrolled_count]
+    # attacker_subjects = subjects[15:] + fire_subjects[fire_enrolled_count:]
+
+    # enrolled_subjects = subjects[:15] 
+    # attacker_subjects = subjects[15:] 
+
+    enrolled_subjects = fire_subjects[:fire_enrolled_count]
+    attacker_subjects = fire_subjects[fire_enrolled_count:]
+    
+    # Create sets to quickly identify which dataset each subject belongs to
+    fire_subjects_set = set(fire_subjects)
+    
+    print(f"Genuine subjects: {len(enrolled_subjects)} ({15} original + {fire_enrolled_count} FIRE)")
+    print(f"Attacker subjects: {len(attacker_subjects)} ({len(subjects)-15} original + {len(fire_subjects)-fire_enrolled_count} FIRE)")
+    
     # Load or build enrollment database
     if os.path.exists(DATABASE_FILE):
         print("Loading existing enrollment database...")
@@ -303,9 +541,14 @@ if __name__ == "__main__":
         database = {}
         print("Building enrollment database...")
         for subject in tqdm(enrolled_subjects, desc="Enrolling subjects"):
-            subject_folder = os.path.join(base_dir, subject)
+            # Determine the correct base directory for this subject
+            if subject in fire_subjects_set:
+                subject_folder = os.path.join(fire_base_dir, subject)
+            else:
+                subject_folder = os.path.join(base_dir, subject)
+                
             images = sorted(os.listdir(subject_folder))
-            enroll_images = images[:3]  # first 3 images for enrollment
+            enroll_images = images[:1]  # first 3 images for enrollment
             for img_name in tqdm(enroll_images, desc=f"Processing {subject}", leave=False):
                 img_path = os.path.join(subject_folder, img_name)
                 template = extract_template(img_path)
@@ -316,27 +559,62 @@ if __name__ == "__main__":
         save_database(database)
         print("Enrollment database saved.")
 
-    # Build Test Set
-    test_set = []
-    print("Building test set...")
-    for subject in tqdm(enrolled_subjects, desc="Test set (genuine)"):
-        subject_folder = os.path.join(base_dir, subject)
-        images = sorted(os.listdir(subject_folder))
-        test_images = images[3:5]  # remaining 2 images
-        for img_name in test_images:
-            img_path = os.path.join(subject_folder, img_name)
-            test_set.append((subject, img_path, True))
-    for subject in tqdm(attacker_subjects, desc="Test set (attackers)"):
-        subject_folder = os.path.join(base_dir, subject)
-        images = sorted(os.listdir(subject_folder))
-        chosen = random.sample(images, 2)
-        for img_name in chosen:
-            img_path = os.path.join(subject_folder, img_name)
-            test_set.append((subject, img_path, False))
-    print(f"Total test images: {len(test_set)}")
+    # Load or build test template database
+    if os.path.exists(TEST_DATABASE_FILE) and os.path.exists(TEST_SET_FILE):
+        print("Loading existing test template database and test set...")
+        test_templates = load_database(TEST_DATABASE_FILE)
+        test_set = load_database(TEST_SET_FILE)
+        print(f"Loaded {len(test_templates)} test templates and {len(test_set)} test set entries")
+    else:
+        # Build Test Set - also applying the same dataset path logic
+        test_set = []
+        print("Building test set...")
+        for subject in tqdm(enrolled_subjects, desc="Test set (genuine)"):
+            if subject in fire_subjects_set:
+                subject_folder = os.path.join(fire_base_dir, subject)
+            else:
+                subject_folder = os.path.join(base_dir, subject)
+            
+            images = sorted(os.listdir(subject_folder))
+            test_images = images[1:2]  # remaining 2 images
+            for img_name in test_images:
+                img_path = os.path.join(subject_folder, img_name)
+                test_set.append((subject, img_path, True))
+                
+        for subject in tqdm(attacker_subjects, desc="Test set (attackers)"):
+            if subject in fire_subjects_set:
+                subject_folder = os.path.join(fire_base_dir, subject)
+            else:
+                subject_folder = os.path.join(base_dir, subject)
+                
+            images = sorted(os.listdir(subject_folder))
+            chosen = random.sample(images, 2)
+            for img_name in chosen:
+                img_path = os.path.join(subject_folder, img_name)
+                test_set.append((subject, img_path, False))
+        print(f"Total test images: {len(test_set)}")
+
+        test_templates = build_test_database(test_set)
+        save_database(test_templates, filename=TEST_DATABASE_FILE)
+        save_database(test_set, TEST_SET_FILE)  # Save the test set alongside templates
+        print(f"Test template database saved with {len(test_templates)} templates.")
+    
+
 
     # Compute Distance Distribution for Threshold Tuning
-    genuine_dists, imposter_dists = compute_distance_distribution(test_set, database)
+    # genuine_dists, imposter_dists = compute_distance_distribution(test_set, database)
+
+    genuine_dists = []
+    imposter_dists = []
+    print("Computing distance distribution...")
+    for true_subject, img_path, is_genuine in tqdm(test_set, desc="Computing distances"):
+        live_template = test_templates[img_path]  # Use precomputed template
+        _, best_dist = match_live_template(live_template, database, threshold=1e9)
+        if is_genuine:
+            genuine_dists.append(best_dist)
+        else:
+            imposter_dists.append(best_dist)
+
     print(f"Average Genuine Distance: {np.mean(genuine_dists):.2f}")
     print(f"Average Imposter Distance: {np.mean(imposter_dists):.2f}")
     plot_distance_distribution(genuine_dists, imposter_dists)
@@ -370,9 +648,13 @@ if __name__ == "__main__":
     print("\n--- Matching and Evaluation ---")
 
     print("Matching test images (Simple Matching)...")
+    # for true_subject, img_path, is_genuine in tqdm(test_set, desc="Simple Matching"):
+    #     live_template = extract_template(img_path)
+    #     matched_subject, _ = match_live_template(live_template, database, threshold=distance_threshold)
+
     for true_subject, img_path, is_genuine in tqdm(test_set, desc="Simple Matching"):
-        live_template = extract_template(img_path)
-        matched_subject, _ = match_live_template(live_template, database, threshold=distance_threshold)
+        live_template = test_templates[img_path]  # Use precomputed template
+        matched_subject, _ = match_live_template(live_template, database, threshold=distance_threshold)        
         if is_genuine:
             if matched_subject == true_subject:
                 true_accepts_simple += 1
@@ -385,9 +667,28 @@ if __name__ == "__main__":
                 false_accepts_simple += 1
 
     print("Matching test images (TSM Matching)...")
+    # for true_subject, img_path, is_genuine in tqdm(test_set, desc="TSM Matching"):
+    #     live_template = extract_template(img_path)
+    #     matched_subject, votes = match_live_template_TSM(live_template, database, distance_threshold=distance_threshold, vote_threshold=vote_threshold)
+    # for true_subject, img_path, is_genuine in tqdm(test_set, desc="TSM Matching"):
+    #     live_template = test_templates[img_path]  # Use precomputed template
+    #     matched_subject, votes = match_live_template_TSM(live_template, database, distance_threshold=distance_threshold, vote_threshold=vote_threshold)
+    #     if is_genuine:
+    #         if matched_subject == true_subject:
+    #             true_accepts_tsm += 1
+    #         else:
+    #             false_rejects_tsm += 1
+    #     else:
+    #         print(f"[DEBUG] Attacker image {true_subject} votes = {votes} -> matched with {matched_subject}")
+    #         if matched_subject is None:
+    #             true_rejects_tsm += 1
+    #         else:
+    #             false_accepts_tsm += 1
+
     for true_subject, img_path, is_genuine in tqdm(test_set, desc="TSM Matching"):
-        live_template = extract_template(img_path)
-        matched_subject, votes = match_live_template_TSM(live_template, database, distance_threshold=distance_threshold, vote_threshold=vote_threshold)
+        live_template = test_templates[img_path]  # Use precomputed template
+        kdtrees = build_kdtrees(database)
+        matched_subject, votes = match_live_template_TSM_kdtree(live_template, kdtrees, distance_threshold=distance_threshold, vote_threshold=vote_threshold)
         if is_genuine:
             if matched_subject == true_subject:
                 true_accepts_tsm += 1

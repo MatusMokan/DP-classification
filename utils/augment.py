@@ -80,7 +80,7 @@ def aug_ridb():
                     print(f"Saved: {out_path}")
 
 
-def augment_fire_dataset(source_dir="dataset/FIRE/onDrive-divided", output_dir="dataset/FIRE/onDrive-divided-augmented"):
+def augment_fire_dataset(source_dir="dataset/FIRE/onDrive-divided-res", output_dir="dataset/FIRE/onDrive-divided-augmented-res"):
     """
     Custom augmentation for FIRE dataset with specific requirements:
     - For first image: Create two augmentations (bright+rotated, dark+negative rotated)
@@ -176,8 +176,68 @@ def augment_fire_dataset(source_dir="dataset/FIRE/onDrive-divided", output_dir="
     print(f"Augmentation complete! Augmented dataset saved to {output_dir}")
     print(f"Created a total of 3 augmented images per person (2 from first image, 1 from second)")
 
+def augment_gratina_dataset(source_dir="dataset/GRATINA/onDrive-divided", output_dir="dataset/GRATINA/onDrive-divided-augmented-more"):
+    """
+    Custom augmentation for GRATINA dataset:
+    - For each image: Create one augmentation with random rotation (-25 to 25 degrees) 
+      and random brightness adjustment (-0.8 to 1.2)
+    
+    Args:
+        source_dir: Directory containing folders with original images
+        output_dir: Directory to save augmented images
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Augmenting images in {source_dir} and saving to {output_dir}")
+    
+    # Define augmentation pipeline
+    aug_pipeline = A.Compose([
+        A.Rotate(limit=(-25, 25), p=1.0),  # Random rotation -25 to 25 degrees
+        A.RandomBrightnessContrast(brightness_limit=[-0.05, 0.05], contrast_limit=0, p=1.0),  # Random brightness 0.8-1.2
+    ])
+    
+    # Process each folder
+    folders = [f for f in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, f))]
+    
+    for folder in tqdm(folders, desc="Processing GRATINA folders"):
+        # Create output folder
+        folder_output_dir = os.path.join(output_dir, folder)
+        os.makedirs(folder_output_dir, exist_ok=True)
+        
+        # Get images in the folder
+        folder_dir = os.path.join(source_dir, folder)
+        images = [f for f in os.listdir(folder_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tif', '.tiff'))]
+        
+        if len(images) < 1:
+            print(f"Warning: Folder {folder} has no images, skipping...")
+            continue
+            
+        # Process first image found
+        image_path = os.path.join(folder_dir, images[0])
+        image = cv2.imread(image_path)
+        if image is None:
+            print(f"Error: Could not read {image_path}, skipping...")
+            continue
+            
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Copy original image to output dir
+        Image.fromarray(image).save(os.path.join(folder_output_dir, images[0]))
+        
+        # Apply augmentation
+        base_name, ext = os.path.splitext(images[0])
+        aug_result = aug_pipeline(image=image)['image']
+        Image.fromarray(aug_result).save(
+            os.path.join(folder_output_dir, f"{base_name}_augmented{ext}")
+        )
+        
+    print(f"Augmentation complete! Augmented dataset saved to {output_dir}")
+    print(f"Created 1 augmented image per folder")
     
 if __name__ == "__main__":
     # aug_ridb()
-    augment_fire_dataset()
+    # augment_fire_dataset()
+    augment_gratina_dataset()  # Add this line to call your new function
+    
+
 

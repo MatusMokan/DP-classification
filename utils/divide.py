@@ -2,10 +2,10 @@ import os
 import shutil
 
 # Source directory containing the images
-source_dir = 'dataset/FIRE/onDrive'
+source_dir = 'dataset/GRATINA/onDrive'
 
 # Destination directory where folders will be created
-dest_dir = 'dataset/FIRE/onDrive-divided'
+dest_dir = 'dataset/GRATINA/onDrive-divided'
 
 # Ensure the destination directory exists
 os.makedirs(dest_dir, exist_ok=True)
@@ -15,7 +15,7 @@ for filename in os.listdir(source_dir):
     if not filename.endswith('_bin_seg.png'):
         # Split the filename to extract the person number
         parts = filename.split('_')
-        if len(parts) >= 3:
+        if len(parts) >= 1:
             person_number = parts[0]
             person_number_2 = parts[1]
             # Create a folder for the person if it doesn't exist

@@ -10,10 +10,11 @@ results-fold3/
 results-fold4/
 results-fold5/
 database.pkl
+database/
 *.png
 vgg/
 efficientNet/
-
+extract_bib/
 
 # Python
 __pycache__/
@@ -36,6 +37,8 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+*.pkl
+
 
 # Virtual environments
 venv/

@@ -12,7 +12,7 @@ print("Python path:", sys.path)
 
 # img = cv2.imread('dataset/onDrive/IM000001_1_bin_seg.png', 0)				# read the input image --> You can enhance the fingerprint image using the "fingerprint_enhancer" library
 # img = cv2.imread('dataset/onDrive/IM000001_1_seg.png', 0)				# read the input image --> You can enhance the fingerprint image using the "fingerprint_enhancer" library
-img = cv2.imread('dataset/onDrive-divided-cropped-augmented/person_1/IM000001_1_seg_aug0.png', 0)				# read the input image --> You can enhance the fingerprint image using the "fingerprint_enhancer" library
+img = cv2.imread('dataset/FIRE/onDrive-divided-augmented-res/person_A01/A01_1_seg_dark_neg_rot.png', 0)				# read the input image --> You can enhance the fingerprint image using the "fingerprint_enhancer" library
 
 FeaturesTerminations, FeaturesBifurcations = fingerprint_feature_extractor.extract_minutiae_features(img, spuriousMinutiaeThresh=10, invertImage=False, showResult=True, saveResult=True)
 
